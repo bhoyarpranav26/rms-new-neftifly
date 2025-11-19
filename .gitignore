@@ -1,0 +1,7 @@
+# Local Netlify folder
+.netlify
+.terraform/
+.terraform.lock.hcl
+*.exe
+*.zip
+
