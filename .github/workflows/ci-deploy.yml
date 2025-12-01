@@ -1,0 +1,54 @@
+name: Build and Deploy Backend to ECR & ECS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    name: Build Backend Docker image, push to ECR and trigger ECS deployment
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Store SendGrid key in AWS Secrets Manager (optional)
+        if: secrets.SENDGRID_API_KEY
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          echo "Writing SENDGRID_API_KEY into Secrets Manager secret 'restom-email-secret'"
+          aws secretsmanager put-secret-value --secret-id restom-email-secret --secret-string '{"SENDGRID_API_KEY":"'"${{ secrets.SENDGRID_API_KEY }}"'"}' --region $AWS_REGION || echo "put-secret failed"
+
+      - name: Build, tag and push Docker image to ECR
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REGISTRY: 111227928158.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ECR_REPOSITORY: restom-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          cd Backend
+          echo "Building Docker image..."
+          docker build -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} .
+          docker tag ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+          echo "Pushing image ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+
+      - name: Force new ECS deployment
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          echo "Triggering ECS service redeploy..."
+          aws ecs update-service --cluster restom-cluster --service restom-service --force-new-deployment --region ${AWS_REGION}

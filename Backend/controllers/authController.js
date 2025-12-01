@@ -6,13 +6,29 @@ const nodemailer = require("nodemailer");
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Configure transporter using env vars. Support SendGrid (API key) or any SMTP server.
+let transporter;
+if (process.env.SENDGRID_API_KEY) {
+  // SendGrid SMTP via nodemailer using API key (user 'apikey')
+  transporter = nodemailer.createTransport({
+    service: 'SendGrid',
+    auth: { user: 'apikey', pass: process.env.SENDGRID_API_KEY },
+  });
+} else {
+  const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
+  const smtpSecure = (process.env.SMTP_SECURE === 'true');
+
+  transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+}
 
 // SIGNUP: save user (unverified) and send OTP by email
 exports.signup = async (req, res) => {
@@ -43,12 +59,17 @@ exports.signup = async (req, res) => {
     }
 
     // send email
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: "Your OTP from KavyaServe",
-      text: `Hello ${name},\n\nYour OTP is ${otp}. It expires in 10 minutes.\n\nIf you didn't request this, ignore this mail.`,
-    });
+    try {
+      await transporter.sendMail({
+        from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+        to: email,
+        subject: process.env.EMAIL_SUBJECT || "Your OTP",
+        text: `Hello ${name},\n\nYour OTP is ${otp}. It expires in 10 minutes.\n\nIf you didn't request this, ignore this mail.`,
+      });
+    } catch (mailErr) {
+      console.error('Error sending OTP email:', mailErr);
+      return res.status(500).json({ message: 'Failed to send OTP email', error: mailErr.message });
+    }
 
     return res.status(200).json({ message: "OTP sent to email" });
   } catch (err) {
